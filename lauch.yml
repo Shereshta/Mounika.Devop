@@ -1,0 +1,174 @@
+Parameters:
+  Environment:
+    Type: String
+  PrivSubnetA:
+    Type: String
+  PrivSubnetB:
+    Type: String
+  VpcId:
+    Type: String
+  VPCCIDR:
+    Type: String
+  InstanceType:
+    Type: String
+    Default: m3.large
+  KeyName:
+    Type: 'AWS::EC2::KeyPair::KeyName'
+  AutoScalingGroupMaxSize:
+    Type: Number
+    Description: Maximum number of instances
+    Default: '2'
+  AvailabilityZones:
+    Type: 'List<AWS::EC2::AvailabilityZone::Name>'
+    MinLength: '1'
+  AllocatedStorage:
+    Type: String
+
+
+Resources:
+  LaunchConfig:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    Metadata:
+      AWS::CloudFormation::Authentication:
+        S3AccessCreds:
+          type: "S3"
+          buckets:
+            - !Ref artifactsbucket
+          roleName:
+            !Ref roltestjasperserver
+      AWS::CloudFormation::Init:
+        configSets:
+          default:
+            - init
+            - setup
+        init:
+          files:
+            '/tmp/agents/amazon-cloudwatch-agent.rpm':
+              source: https://s3.amazonaws.com/amazoncloudwatch-agent/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm
+            '/tmp/agents/amazon-linux-2-cw-install.sh':
+              source: https://s3-us-west-2.amazonaws.com/streetlinks-artifacts/scripts/amazon-linux-2-cw-install.sh
+              mode: "000700"
+              owner: "root"
+              group: "root"
+              authentication: "S3AccessCreds"
+        
+    Properties:
+      AssociatePublicIpAddress: true
+      ImageId: !FindInMap
+        - AWSRegionAMI
+        - !Ref 'AWS::Region'
+        - '64'
+      SecurityGroups:
+        - !Ref TestecurityGroup
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref TestInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          set -e
+          export PATH=$PATH:/usr/local/bin
+          DEBIAN_FRONTEND="noninteractive"
+          sleep 60
+          apt update
+          apt install nginx
+          sleep 60
+          apt-get install -y parted
+
+          #change timezone to CTZ
+      KeyName: !Ref KeyName
+  TestecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VpcId
+      GroupDescription: for Jaspersoft BI v7.1
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: !Ref VPCCIDR
+
+  TestServerGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref PrivSubnetA
+        - !Ref PrivSubnetB
+      LoadBalancerNames:
+        - !Ref ElasticLoadBalancer
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 600
+      LaunchConfigurationName: !Ref LaunchConfig
+      MinSize: '1'
+      MaxSize: !Ref AutoScalingGroupMaxSize
+      DesiredCapacity: '1'
+  TestEC2Instance:
+    Type: 'AWS::EC2::Instance'
+    Version: '7.1'
+    Properties:
+      InstanceInitiatedShutdownBehavior: stop
+      ImageId: !FindInMap
+        - AWSRegionAMI
+        - !Ref 'AWS::Region'
+        - '64'
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      Monitoring: 'false'
+      DisableApiTermination: 'false'
+      SecurityGroupIds:
+        - !Ref TestecurityGroup
+      SubnetId: !Ref PrivSubnetA
+
+
+  TesdtDBSubnetGroup:
+    Type: 'AWS::RDS::DBSubnetGroup'
+    Properties:
+      DBSubnetGroupDescription: Subnet Group for Jasper RDS DB
+      DBSubnetGroupName: JasperDBSubnetGroup
+      SubnetIds:
+        - !Ref PrivSubnetA
+        - !Ref PrivSubnetB
+ 
+  TestAlbExt:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      Name: lx-stge-web-server-alb-internet
+      Scheme: internet-facing
+      SecurityGroups:
+      - !Ref lxalbwebserversg
+      Subnets:
+        - !Ref PCIPublicSubnetA
+        - !Ref PCIPublicSubnetB
+      Tags:
+        - Key: Name
+          Value: lx-stge-web-server-alb-internet
+        - Key: Application
+          Value: !Ref application
+        - Key: Environment
+          Value: !Ref Environment
+  TestAlbExtTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      VpcId: !Ref VpcId
+      Port: 80
+      HealthCheckPort: 80
+      HealthCheckPath: /index.html
+      HealthCheckProtocol: HTTP
+      HealthCheckIntervalSeconds: 60
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 8
+      Protocol: HTTP
+      Name: Test
+      Matcher:
+        HttpCode: 200
+      Tags:
+        - Key: Name
+          Value: Test
+        - Key: Application
+          Value: !Ref application
+        - Key: Environment
+          Value: !Ref Environment

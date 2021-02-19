@@ -1,0 +1,50 @@
+Parameters:
+  environment:
+    Type: String
+  privatesubnet1cidr:
+    Type: String
+  privatesubnet2cidr:
+    Type: String
+  VpcId:
+    Type: String
+
+Resources:
+
+  privsubneta:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Sub ${privatesubnet1cidr}
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [Ref: environment, private-a]]
+      VpcId: !Sub ${VpcId}
+
+  privsubnetb:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Sub ${privatesubnet2cidr}
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [Ref: environment, private-b]]
+      VpcId: !Sub ${VpcId}
+
+
+Outputs:
+
+  PrivSubnetAOutput:
+    Value:
+      Ref: privsubneta
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-privsubneta
+
+  PrivSubnetBOutput:
+    Value:
+      Ref: privsubnetb
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-privsubnetb
